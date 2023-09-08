@@ -6,6 +6,8 @@
 
 (ns app.main.ui.viewer.inspect.attributes.common
   (:require
+   [app.common.media :as cm]
+   [app.config :as cf]
    [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.ui.components.color-bullet :refer [color-bullet color-name]]
@@ -44,38 +46,55 @@
   (let [colors-library (get-colors-library color)
         file-colors (get-file-colors)
         color-library-name (get-in (or colors-library file-colors) [(:id color) :name])
-        color (assoc color :color-library-name color-library-name)]
-    [:div.attributes-color-row
-     (when color-library-name
-       [:div.attributes-color-id
-        [:& color-bullet {:color color}]
-        [:div color-library-name]])
+        color (assoc color :color-library-name color-library-name)
+        image (:image color)]
+    [:*
+     [:div.attributes-color-row
+      (when color-library-name
+        [:div.attributes-color-id
+         [:& color-bullet {:color color}]
+         [:div color-library-name]])
 
-     [:div.attributes-color-value {:class (when color-library-name "hide-color")}
-      [:& color-bullet {:color color}]
+      [:div.attributes-color-value {:class (when color-library-name "hide-color")}
+       [:& color-bullet {:color color}]
 
-      (if (:gradient color)
-        [:& color-name {:color color}]
-        (case format
-          :rgba (let [[r g b a] (uc/hex->rgba (:color color) (:opacity color))]
-                  [:div (str/fmt "%s, %s, %s, %s" r g b a)])
-          :hsla (let [[h s l a] (uc/hex->hsla (:color color) (:opacity color))
-                      result (uc/format-hsla [h s l a])]
-                  [:div result])
-          [:*
-           [:& color-name {:color color}]
-           (when-not (:gradient color) [:div (str (* 100 (:opacity color)) "%")])]))
+       (cond
+         (:gradient color)
+         [:& color-name {:color color}]
 
-      (when-not (and on-change-format (:gradient color))
-        [:select.color-format-select {:on-change #(-> (dom/get-target-val %) keyword on-change-format)}
-         [:option {:value "hex"}
-          (tr "inspect.attributes.color.hex")]
+         (= format :rgba)
+         (let [[r g b a] (uc/hex->rgba (:color color) (:opacity color))]
+           [:div (str/fmt "%s, %s, %s, %s" r g b a)])
 
-         [:option {:value "rgba"}
-          (tr "inspect.attributes.color.rgba")]
+         (= format :hsla)
+         (let [[h s l a] (uc/hex->hsla (:color color) (:opacity color))
+               result (uc/format-hsla [h s l a])]
+           [:div result])
 
-         [:option {:value "hsla"}
-          (tr "inspect.attributes.color.hsla")]])]
-     (when copy-data
-       [:& copy-button {:data copy-data}])]))
+         :else
+         [:*
+          [:& color-name {:color color}]
+          (when-not (:gradient color) [:div (str (* 100 (:opacity color)) "%")])])
+
+       (when-not (and on-change-format (or (:gradient color) image))
+         [:select.color-format-select {:on-change #(-> (dom/get-target-val %) keyword on-change-format)}
+          [:option {:value "hex"}
+           (tr "inspect.attributes.color.hex")]
+
+          [:option {:value "rgba"}
+           (tr "inspect.attributes.color.rgba")]
+
+          [:option {:value "hsla"}
+           (tr "inspect.attributes.color.hsla")]])]
+      (when (and copy-data (not image))
+        [:& copy-button {:data copy-data}])]
+
+     (when image
+       (let [mtype     (-> image :mtype)
+             name      (or (:name image) (tr "todo.image"))
+             extension (cm/mtype->extension mtype)]
+         [:a.download-button {:target "_blank"
+                              :download (cond-> name extension (str/concat extension))
+                              :href (cf/resolve-file-media image)}
+          (tr "inspect.attributes.image.download")]))]))
 

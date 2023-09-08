@@ -6,6 +6,7 @@
 
 (ns app.main.ui.shapes.custom-stroke
   (:require
+   [app.config :as cfg]
    [app.common.data :as d]
    [app.common.data.macros :as dm]
    [app.common.geom.rect :as grc]
@@ -15,6 +16,7 @@
    [app.common.pages.helpers :as cph]
    [app.main.ui.context :as muc]
    [app.main.ui.shapes.attrs :as attrs]
+   [app.main.ui.shapes.embed :as embed]
    [app.main.ui.shapes.gradients :as grad]
    [app.util.object :as obj]
    [cuerdas.core :as str]
@@ -83,11 +85,18 @@
   (let [id-prefix (dm/str "marker-" render-id)
 
         gradient  (:stroke-color-gradient stroke)
+        image     (:stroke-image stroke)
         cap-start (:stroke-cap-start stroke)
         cap-end   (:stroke-cap-end stroke)
 
-        color     (if (some? gradient)
+        color     (cond
+                    (some? gradient)
                     (str/ffmt "url(#stroke-color-gradient_%s_%s)" render-id index)
+
+                    (some? image)
+                    (str/ffmt "url(#stroke-fill_%_%)" render-id index)
+
+                    :else
                     (:stroke-color stroke))
 
         opacity   (when-not (some? gradient)
@@ -197,7 +206,6 @@
         gradient   (:stroke-color-gradient stroke)
         alignment  (:stroke-alignment stroke :center)
         width      (:stroke-width stroke 0)
-
         props      #js {:id (dm/str "stroke-color-gradient_" render-id "_" index)
                         :gradient gradient
                         :shape shape}]
@@ -206,6 +214,44 @@
        (case (:type gradient)
          :linear [:> grad/linear-gradient props]
          :radial [:> grad/radial-gradient props]))
+
+     (when (:stroke-image stroke)
+       (let [uri (cfg/resolve-file-media (:stroke-image stroke))
+             embed (embed/use-data-uris [uri])
+
+
+             stroke-width   (case (:stroke-alignment stroke :center)
+                              :center (/ (:stroke-width stroke 0) 2)
+                              :outer (:stroke-width stroke 0)
+                              0)
+             margin         (gsb/shape-stroke-margin stroke stroke-width)
+
+             ;; NOTE: for performance reasons we may can delimit a bit the
+             ;; dependencies to really useful shape attrs instead of using
+             ;; the shepe as-is.
+             selrect       (mf/with-memo [shape]
+                             (if (cph/text-shape? shape)
+                               (gst/shape->rect shape)
+                               (grc/points->rect (:points shape))))
+
+             stroke-margin (+ stroke-width margin)
+
+             w             (+ (dm/get-prop selrect :width) (* 2 stroke-margin))
+             h             (+ (dm/get-prop selrect :height) (* 2 stroke-margin))]
+         
+         ;; We need to make the pattern size and the image fit so it's not repeated
+         [:pattern {:id (dm/str "stroke-fill_" render-id "_" index)
+                    :patternContentUnits "objectBoundingBox"
+                    :x (- (/ stroke-margin (dm/get-prop selrect :width)))
+                    :y (- (/ stroke-margin (dm/get-prop selrect :height)))
+                    :width (/ w (dm/get-prop selrect :width))
+                    :height (/ h (dm/get-prop selrect :height))
+                    :viewBox "0 0 1 1"
+                    :preserveAspectRatio "xMidYMid slice"}
+          [:image {:href (get embed uri uri)
+                   :preserveAspectRatio "xMidYMid slice"
+                   :width 1
+                   :height 1}]]))
 
      (cond
        (and (not open-path?)
@@ -384,7 +430,7 @@
 
         url-fill?    (or ^boolean (some? (:fill-image shape))
                          ^boolean (cph/image-shape? shape)
-                         ^boolean (> (count shape-fills) 1)
+                         ^boolean (> (count shape-fills) 0)
                          ^boolean (some? (some :fill-color-gradient shape-fills)))
 
         props        (if (cph/frame-shape? shape)
@@ -446,6 +492,10 @@
                   (obj/set! "fill" "none")
                   (obj/set! "fillOpacity" "none")
                   (obj/merge! (attrs/get-stroke-style value position render-id)))
+
+        style     (if (:stroke-image value)
+                    (obj/set! style "stroke" (dm/fmt "url(#stroke-fill_%_%)" render-id position))
+                    style)
 
         props (-> (obj/clone props)
                   (obj/unset! "fill")

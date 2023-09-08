@@ -5,14 +5,24 @@
 ;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.workspace.colorpicker
+  (:require-macros [app.main.style :as stl])
   (:require
+   [app.common.data :as d]
+   [app.common.geom.point :as gpt]
+   [app.common.media :as cm]
+   [app.config :as cfg]
    [app.main.data.modal :as modal]
+   [app.main.data.workspace :as dw]
    [app.main.data.workspace.colors :as dc]
    [app.main.data.workspace.libraries :as dwl]
+   [app.main.data.workspace.media :as dwm]
    [app.main.data.workspace.undo :as dwu]
    [app.main.refs :as refs]
    [app.main.store :as st]
+   [app.main.ui.components.select :refer [select]]
+   [app.main.ui.context :as ctx]
    [app.main.ui.icons :as i]
+   [app.main.ui.components.file-uploader :refer [file-uploader]]
    [app.main.ui.workspace.colorpicker.color-inputs :refer [color-inputs]]
    [app.main.ui.workspace.colorpicker.gradients :refer [gradients]]
    [app.main.ui.workspace.colorpicker.harmony :refer [harmony-selector]]
@@ -43,8 +53,9 @@
 ;; --- Color Picker Modal
 
 (mf/defc colorpicker
-  [{:keys [data disable-gradient disable-opacity on-change on-accept]}]
-  (let [state               (mf/deref refs/colorpicker)
+  [{:keys [data disable-gradient disable-opacity disable-image on-change on-accept]}]
+  (let [new-css-system      (mf/use-ctx ctx/new-css-system)
+        state               (mf/deref refs/colorpicker)
         node-ref            (mf/use-ref)
 
         ;; TODO: I think we need to put all this picking state under
@@ -56,17 +67,51 @@
 
         current-color       (:current-color state)
 
-        active-tab          (mf/use-state (dc/get-active-color-tab))
+        active-fill-tab     (if (:image data)
+                              :image
+                              (if-let [gradient (:gradient data)]
+                                (case (:type gradient)
+                                  :linear :linear-gradient
+                                  :radial :radial-gradient)
+                                :color))
+        active-color-tab    (mf/use-state (dc/get-active-color-tab))
         drag?               (mf/use-state false)
+
+        file-id             (mf/use-ctx ctx/current-file-id)
+        fill-image-ref      (mf/use-ref nil)
+
+        selected-mode       (get state :type :color)
         
+        on-fill-image-success
+        (mf/use-fn
+          (fn [image]
+            (st/emit! (dc/update-colorpicker-color {:image (select-keys image [:id :width :height :mtype :name])} (not @drag?)))))
+
+        on-fill-image-click
+        (mf/use-callback #(dom/click (mf/ref-val fill-image-ref)))
+
+        on-fill-image-selected
+        (mf/use-fn
+          (fn [file]
+            (st/emit! (dwm/upload-fill-image file on-fill-image-success))))
+
         set-tab!
         (mf/use-fn
           (fn [event]
             (let [tab (-> (dom/get-current-target event)
                           (dom/get-data "tab")
                           (keyword))]
-              (reset! active-tab tab)
+              (reset! active-color-tab tab)
               (dc/set-active-color-tab! tab))))
+
+        handle-change-mode
+        (mf/use-fn
+          (fn [value]
+            (case value
+              :color (st/emit! (dc/activate-colorpicker-color))
+              :linear-gradient (st/emit! (dc/activate-colorpicker-gradient :linear-gradient))
+              :radial-gradient (st/emit! (dc/activate-colorpicker-gradient :radial-gradient))
+              :image (st/emit! (dc/activate-colorpicker-image)))))
 
         handle-change-color
         (mf/use-fn
@@ -98,7 +143,7 @@
         on-select-library-color
         (mf/use-fn
          (fn [state color]
-           (let [type-origin (:type state)
+           (let [type-origin selected-mode
                  editig-stop-origin (:editing-stop state)
                  is-gradient? (some? (:gradient color))
                  change-to (fn [new-color]
@@ -128,7 +173,7 @@
              ;; Click on a solid color -> This color is applied to the selected offset
              ;; Click on a color with transparency -> The same to solid color will happend
              ;; Click on any kind of gradient -> The color changes completly to new gradient
-             
+
              ;; If we have a non gradient color the new color is applied without any change
              (if (or (= :radial-gradient type-origin) (= :linear-gradient type-origin))
                (if is-gradient?
@@ -142,12 +187,6 @@
          (fn [_]
            (st/emit! (dwl/add-color (dc/get-color-from-colorpicker-state state)))))
 
-        on-activate-linear-gradient
-        (mf/use-fn #(st/emit! (dc/activate-colorpicker-gradient :linear-gradient)))
-
-        on-activate-radial-gradient
-        (mf/use-fn #(st/emit! (dc/activate-colorpicker-gradient :radial-gradient)))
-
         on-start-drag
         (mf/use-fn
          (fn []
@@ -158,11 +197,21 @@
         (mf/use-fn
          (fn []
            (reset! drag? false)
-           (st/emit! (dwu/commit-undo-transaction (mf/ref-val node-ref)))))]
+           (st/emit! (dwu/commit-undo-transaction (mf/ref-val node-ref)))))
+
+        options
+        (mf/with-memo [selected-mode disable-gradient disable-image]
+          (d/concat-vec
+            [{:value :color :label (tr "todo.solid")}]
+            (when (not disable-gradient)
+              [{:value :linear-gradient :label (tr "todo.linear")}
+               {:value :radial-gradient :label (tr "todo.radial")}])
+            (when (not disable-image)
+              [{:value :image :label (tr "todo.image")}])))]
 
     ;; Initialize colorpicker state
     (mf/with-effect []
-      (st/emit! (dc/initialize-colorpicker on-change))
+      (st/emit! (dc/initialize-colorpicker on-change active-fill-tab))
       (partial st/emit! (dc/finalize-colorpicker)))
 
     ;; Update colorpicker with external color changes
@@ -203,95 +252,116 @@
                        :style {:touch-action "none"}}
      [:div.colorpicker-content
       [:div.top-actions
-       [:button.picker-btn
-        {:class (when picking-color? "active")
-         :on-click handle-click-picker}
-        i/picker]
+       (when (not= selected-mode :image)
+         [:button.picker-btn
+          {:class (when picking-color? "active")
+           :on-click handle-click-picker}
+          i/picker])
 
-       (when (not disable-gradient)
-         [:div.gradients-buttons
-          [:button.gradient.linear-gradient
-           {:on-click on-activate-linear-gradient
-            :class (when (= :linear-gradient (:type state)) "active")}]
+       ;; If we only have the solid option enabled we don't show any selector
+       (when (or (not disable-gradient) (not disable-image))
+         (if new-css-system
+           [:div {:class (stl/css :select)}
+            [:& select
+             {:default-value selected-mode
+              :options options
+              :on-change handle-change-mode}]]
+           [:div.element-set-content
+            [:& select
+             {:default-value selected-mode
+              :options options
+              :on-change handle-change-mode}]]))]
 
-          [:button.gradient.radial-gradient
-           {:on-click on-activate-radial-gradient
-            :class (when (= :radial-gradient (:type state)) "active")}]])]
+       (when (or (= selected-mode :linear-gradient)
+               (= selected-mode :radial-gradient))
+         [:& gradients
+          {:stops (:stops state)
+           :editing-stop (:editing-stop state)
+           :on-select-stop handle-change-stop}])
 
+       (if (= selected-mode :image)
+         (let [uri (cfg/resolve-file-media (:image current-color))]
+           [:*
+            [:img {:src uri}]
+            [:button
+             {:title "TODO"
+              :aria-label "TODO"
+              :on-click on-fill-image-click}
+             (tr "TODO.upload-fill-image")
+             [:& file-uploader
+              {:input-id "fill-image-upload"
+               :accept "image/jpeg,image/png"
+               :multi false
+               :ref fill-image-ref
+               :on-selected on-fill-image-selected}]]])
+         [:*
+          [:div.colorpicker-tabs
+           [:div.colorpicker-tab.tooltip.tooltip-bottom.tooltip-expand
+            {:class (when (= @active-color-tab :ramp) "active")
+             :alt (tr "workspace.libraries.colors.rgba")
+             :on-click set-tab!
+             :data-tab "ramp"} i/picker-ramp]
+           [:div.colorpicker-tab.tooltip.tooltip-bottom.tooltip-expand
+            {:class (when (= @active-color-tab :harmony) "active")
+             :alt (tr "workspace.libraries.colors.rgb-complementary")
+             :on-click set-tab!
+             :data-tab "harmony"} i/picker-harmony]
+           [:div.colorpicker-tab.tooltip.tooltip-bottom.tooltip-expand
+            {:class (when (= @active-color-tab :hsva) "active")
+             :alt (tr "workspace.libraries.colors.hsv")
+             :on-click set-tab!
+             :data-tab "hsva"} i/picker-hsv]]
 
-      (when (or (= (:type state) :linear-gradient)
-                (= (:type state) :radial-gradient))
-        [:& gradients
-         {:stops (:stops state)
-          :editing-stop (:editing-stop state)
-          :on-select-stop handle-change-stop}])
+          (if picking-color?
+            [:div.picker-detail-wrapper
+             [:div.center-circle]
+             [:canvas#picker-detail {:width 200 :height 160}]]
+            (case @active-color-tab
+              :ramp
+              [:& ramp-selector
+               {:color current-color
+                :disable-opacity disable-opacity
+                :on-change handle-change-color
+                :on-start-drag on-start-drag
+                :on-finish-drag on-finish-drag}]
+              :harmony
+              [:& harmony-selector
+               {:color current-color
+                :disable-opacity disable-opacity
+                :on-change handle-change-color
+                :on-start-drag on-start-drag
+                :on-finish-drag on-finish-drag}]
+              :hsva
+              [:& hsva-selector
+               {:color current-color
+                :disable-opacity disable-opacity
+                :on-change handle-change-color
+                :on-start-drag on-start-drag
+                :on-finish-drag on-finish-drag}]
+              nil))
 
-      [:div.colorpicker-tabs
-       [:div.colorpicker-tab.tooltip.tooltip-bottom.tooltip-expand
-        {:class (when (= @active-tab :ramp) "active")
-         :alt (tr "workspace.libraries.colors.rgba")
-         :on-click set-tab!
-         :data-tab "ramp"} i/picker-ramp]
-       [:div.colorpicker-tab.tooltip.tooltip-bottom.tooltip-expand
-        {:class (when (= @active-tab :harmony) "active")
-         :alt (tr "workspace.libraries.colors.rgb-complementary")
-         :on-click set-tab!
-         :data-tab "harmony"} i/picker-harmony]
-       [:div.colorpicker-tab.tooltip.tooltip-bottom.tooltip-expand
-        {:class (when (= @active-tab :hsva) "active")
-         :alt (tr "workspace.libraries.colors.hsv")
-         :on-click set-tab!
-         :data-tab "hsva"} i/picker-hsv]]
-
-      (if picking-color?
-        [:div.picker-detail-wrapper
-         [:div.center-circle]
-         [:canvas#picker-detail {:width 200 :height 160}]]
-        (case @active-tab
-          :ramp
-          [:& ramp-selector
-           {:color current-color
+          [:& color-inputs
+           {:type (if (= @active-color-tab :hsva) :hsv :rgb)
             :disable-opacity disable-opacity
-            :on-change handle-change-color
-            :on-start-drag on-start-drag
-            :on-finish-drag on-finish-drag}]
-          :harmony
-          [:& harmony-selector
-           {:color current-color
+            :color current-color
+            :on-change handle-change-color}]
+
+          [:& libraries
+           {:state state
+            :current-color current-color
+            :disable-gradient disable-gradient
             :disable-opacity disable-opacity
-            :on-change handle-change-color
-            :on-start-drag on-start-drag
-            :on-finish-drag on-finish-drag}]
-          :hsva
-          [:& hsva-selector
-           {:color current-color
-            :disable-opacity disable-opacity
-            :on-change handle-change-color
-            :on-start-drag on-start-drag
-            :on-finish-drag on-finish-drag}]
-          nil))
+            :disable-image disable-image
+            :on-select-color on-select-library-color
+            :on-add-library-color on-add-library-color}]])
 
-      [:& color-inputs
-       {:type (if (= @active-tab :hsva) :hsv :rgb)
-        :disable-opacity disable-opacity
-        :color current-color
-        :on-change handle-change-color}]
-
-      [:& libraries
-       {:state state
-        :current-color current-color
-        :disable-gradient disable-gradient
-        :disable-opacity disable-opacity
-        :on-select-color on-select-library-color
-        :on-add-library-color on-add-library-color}]
-
-      (when on-accept
-        [:div.actions
-         [:button.btn-primary.btn-large
-          {:on-click (fn []
-                       (on-accept (dc/get-color-from-colorpicker-state state))
-                       (modal/hide!))}
-          (tr "workspace.libraries.colors.save-color")]])]]))
+       (when on-accept
+         [:div.actions
+          [:button.btn-primary.btn-large
+           {:on-click (fn []
+                        (on-accept (dc/get-color-from-colorpicker-state state))
+                        (modal/hide!))}
+           (tr "workspace.libraries.colors.save-color")]])]]))
 
 (defn calculate-position
   "Calculates the style properties for the given coordinates and position"
@@ -314,7 +384,9 @@
   [{:keys [x y data position
            disable-gradient
            disable-opacity
-           on-change on-close on-accept] :as props}]
+           disable-image
+           on-change on-close on-accept
+           tab] :as props}]
   (let [vport (mf/deref viewport)
         dirty? (mf/use-var false)
         last-change (mf/use-var nil)
@@ -338,6 +410,7 @@
      [:& colorpicker {:data data
                       :disable-gradient disable-gradient
                       :disable-opacity disable-opacity
+                      :disable-image disable-image
                       :on-change handle-change
                       :on-accept on-accept}]]))
 

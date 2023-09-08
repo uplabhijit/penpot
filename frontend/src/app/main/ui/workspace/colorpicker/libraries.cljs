@@ -22,14 +22,14 @@
    [rumext.v2 :as mf]))
 
 (mf/defc libraries
-  [{:keys [state on-select-color on-add-library-color disable-gradient disable-opacity]}]
+  [{:keys [state on-select-color on-add-library-color disable-gradient disable-opacity disable-image]}]
   (let [selected         (h/use-shared-state mdc/colorpicker-selected-broadcast-key :recent)
         current-colors   (mf/use-state [])
 
         shared-libs      (mf/deref refs/workspace-libraries)
         file-colors      (mf/deref refs/workspace-file-colors)
         recent-colors    (mf/deref refs/workspace-recent-colors)
-        recent-colors    (h/use-equal-memo  (filter #(or (:gradient %) (:color %)) recent-colors))
+        recent-colors    (h/use-equal-memo  (filter #(or (:gradient %) (:color %) (:image %)) recent-colors))
 
         on-library-change
         (mf/use-fn
@@ -44,7 +44,8 @@
         check-valid-color?
         (fn [color]
           (and (or (not disable-gradient) (not (:gradient color)))
-               (or (not disable-opacity) (= 1 (:opacity color)))))]
+               (or (not disable-opacity) (= 1 (:opacity color)))
+               (or (not disable-image) (not (:image color)))))]
 
     ;; Load library colors when the select is changed
     (mf/with-effect [@selected recent-colors file-colors]

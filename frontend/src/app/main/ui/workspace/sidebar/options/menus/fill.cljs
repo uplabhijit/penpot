@@ -141,7 +141,8 @@
                                     :opacity (:fill-opacity value)
                                     :id (:fill-color-ref-id value)
                                     :file-id (:fill-color-ref-file value)
-                                    :gradient (:fill-color-gradient value)}
+                                    :gradient (:fill-color-gradient value)
+                                    :image (:fill-image value)}
                             :key index
                             :index index
                             :title (tr "workspace.options.fill")

@@ -80,7 +80,8 @@
                             :opacity (:stroke-opacity stroke)
                             :id (:stroke-color-ref-id stroke)
                             :file-id (:stroke-color-ref-file stroke)
-                            :gradient (:stroke-color-gradient stroke)}
+                            :gradient (:stroke-color-gradient stroke)
+                            :image (:stroke-image stroke)}
                     :index index
                     :title title
                     :on-change (on-color-change index)
