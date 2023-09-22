@@ -101,6 +101,10 @@
                  (get-in (get-data m) [:attrs ns-att]))]
      (when val (val-fn val)))))
 
+(defn find-node-by-metadata-value
+  [meta value coll]
+  (->> coll (d/seek #(= value (get-meta % meta)))))
+
 (defn get-children
   [node]
   (cond-> (:content node)
@@ -317,6 +321,20 @@
                :end-y   (get-meta gradient-node :end-y   d/parse-double)
                :width   (get-meta gradient-node :width   d/parse-double))))))
 
+(defn parse-stroke-image
+  [node ref-url]
+  (let [[_ url] (re-find url-regex ref-url)
+        node (->> node (node-seq) (find-node-by-metadata-value :stroke-color ref-url))
+        _ (println "node" node)
+        _ (println "parse-image" url {:id     (get-meta node :media-id)
+                                      :width  (get-meta node :media-width)
+                                      :height (get-meta node :media-height)
+                                      :mtype  (get-meta node :media-mtype)})]
+    {:id     (get-meta node :media-id)
+     :width  (get-meta node :media-width)
+     :height (get-meta node :media-height)
+     :mtype  (get-meta node :media-mtype)}))
+
 (defn add-svg-position [props node]
   (let [svg-content (get-data node :penpot:svg-content)]
     (cond-> props
@@ -465,14 +483,20 @@
 (defn add-stroke
   [props node svg-data]
 
-  (let [stroke-style (get-meta node :stroke-style keyword)
+  (let [stroke-style     (get-meta node :stroke-style keyword)
         stroke-alignment (get-meta node :stroke-alignment keyword)
-        stroke (:stroke svg-data)
-        gradient (when (str/starts-with? stroke "url")
-                   (parse-gradient node stroke))
-        stroke-cap-start (get-meta node :stroke-cap-start keyword)
-        stroke-cap-end (get-meta node :stroke-cap-end keyword)]
+        stroke           (:stroke svg-data)
+        gradient         (when (str/starts-with? stroke "url(#stroke-color-gradient")
+                           (parse-gradient node stroke))
+        image            (when (str/starts-with? stroke "url(#stroke-fill")
+                           (parse-stroke-image node stroke))
 
+        stroke-cap-start (get-meta node :stroke-cap-start keyword)
+        stroke-cap-end   (get-meta node :stroke-cap-end keyword)]
+
+    #_(println "--------add stroke" image)
+;; :stroke-image (when (str/starts-with? (get-meta stroke-node :stroke-color) "url(#stroke-fill")
+;;                 (parse-image node (get-meta stroke-node :stroke-color)))
     (cond-> props
       :always
       (assoc :stroke-alignment stroke-alignment
@@ -730,6 +754,7 @@
   (let [fills-node (get-data node :penpot:fills)
         fills (->> (find-all-nodes fills-node :penpot:fill)
                    (mapv (fn [fill-node]
+                           ;; TODO: something similar to strokes
                            {:fill-color  (when (not (str/starts-with? (get-meta fill-node :fill-color) "url"))
                                            (get-meta fill-node :fill-color))
                             :fill-color-gradient (when (str/starts-with? (get-meta fill-node :fill-color) "url")
@@ -752,8 +777,10 @@
                      (mapv (fn [stroke-node]
                              {:stroke-color  (when (not (str/starts-with? (get-meta stroke-node :stroke-color) "url"))
                                                (get-meta stroke-node :stroke-color))
-                              :stroke-color-gradient (when (str/starts-with? (get-meta stroke-node :stroke-color) "url")
+                              :stroke-color-gradient (when (str/starts-with? (get-meta stroke-node :stroke-color) "url(#stroke-color-gradient")
                                                        (parse-gradient node (get-meta stroke-node :stroke-color)))
+                              :stroke-image (when (str/starts-with? (get-meta stroke-node :stroke-color) "url(#stroke-fill")
+                                                       (parse-stroke-image node (get-meta stroke-node :stroke-color)))
                               :stroke-color-ref-file (get-meta stroke-node :stroke-color-ref-file uuid/uuid)
                               :stroke-color-ref-id (get-meta stroke-node :stroke-color-ref-id uuid/uuid)
                               :stroke-opacity (get-meta stroke-node :stroke-opacity d/parse-double)
@@ -804,6 +831,11 @@
         (cond-> (d/not-empty? grids)
           (assoc :grids grids)))))
 
+(defn has-stroke-image-fill?
+  [node]
+  (let [image-stroke (get-meta node :stroke-color)]
+    (str/starts-with? image-stroke "url(#stroke-fill")))
+
 (defn has-image?
   [node]
   (let [type (get-type node)
@@ -812,13 +844,43 @@
             (find-node :defs)
             (find-node :pattern)
             (find-node :g)
-            (find-node :image))]
+            (find-node :image))
+
+        ;; TODO review this for fill-image too
+        
+        ;; TODO image fills too
+        
+        ;; image-stroke-nodes (-> node
+        ;;                        (find-node :penpot:shape)
+        ;;                        (find-node :penpot:strokes)
+        ;;                        (find-all-nodes :penpot:stroke))
+        
+        image-strokes
+        (->> (get-meta node :stroke-color)
+             (filterv #(str/starts-with? % "url(#stroke-fill")))
+        #_(->> image-stroke-nodes
+               (mapv (fn [node]
+                       (get-meta node :stroke-color)))
+               (filterv #(str/starts-with? % "url(#stroke-fill")))]
+    
+    ;; (println "image-strokes" image-strokes node)
+    
     (or (= type :image)
-        (some? pattern-image))))
+      (some? pattern-image)
+      #_(d/not-empty? image-strokes))))
 
 (defn get-image-name
   [node]
   (get-meta node :name))
+
+(defn get-stroke-image-fill-data
+  [node nodes]
+  (let [ref-url (get-meta node :stroke-color)
+        [_ url] (re-find url-regex ref-url)]
+    (-> (find-node-by-id url nodes)
+        (find-node :image)
+        (:attrs)
+        (:href))))
 
 (defn get-image-data
   [node]
@@ -831,6 +893,8 @@
             :attrs)
         image-data (get-svg-data :image node)
         svg-data (or image-data pattern-data)]
+    ;; Saca la info del get-svg-data
+    ;; (println "get-image-data" image-data)
     (or (:href svg-data) (:xlink:href svg-data))))
 
 (defn get-image-fill

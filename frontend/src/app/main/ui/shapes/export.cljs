@@ -287,9 +287,14 @@
      [:> "penpot:fills" #js {}
       (for [[index fill] (d/enumerate fills)]
         [:> "penpot:fill"
-         #js {:penpot:fill-color          (if (some? (:fill-color-gradient fill))
-                                              (str/format "url(#%s)" (str "fill-color-gradient_" (mf/use-ctx muc/render-id) "_" index))
-                                              (d/name (:fill-color fill)))
+         #js {:penpot:fill-color          (cond 
+                                            (some? (:fill-color-gradient fill))
+                                            (str/format "url(#%s)" (str "fill-color-gradient_" (mf/use-ctx muc/render-id) "_" index))
+                                            
+                                            ;; TODO fill-image
+                                            
+                                            :else
+                                            (d/name (:fill-color fill)))
               :penpot:fill-color-ref-file (d/name (:fill-color-ref-file fill))
               :penpot:fill-color-ref-id   (d/name (:fill-color-ref-id fill))
               :penpot:fill-opacity        (d/name (:fill-opacity fill))}])])))
@@ -300,8 +305,14 @@
      [:> "penpot:strokes" #js {}
       (for [[index stroke] (d/enumerate strokes)]
         [:> "penpot:stroke"
-         #js {:penpot:stroke-color          (if (some? (:stroke-color-gradient stroke))
+         #js {:penpot:stroke-color          (cond 
+                                              (some? (:stroke-color-gradient stroke))
                                               (str/format "url(#%s)" (str "stroke-color-gradient_" (mf/use-ctx muc/render-id) "_" index))
+                                              
+                                              (some? (:stroke-image stroke))
+                                              (str/format "url(#%s)" (str "stroke-fill_" (mf/use-ctx muc/render-id) "_" index))
+                                              
+                                              :else
                                               (d/name (:stroke-color stroke)))
               :penpot:stroke-color-ref-file (d/name (:stroke-color-ref-file stroke))
               :penpot:stroke-color-ref-id   (d/name (:stroke-color-ref-id stroke))
