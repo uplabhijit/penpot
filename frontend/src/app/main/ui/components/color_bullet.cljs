@@ -7,7 +7,6 @@
 (ns app.main.ui.components.color-bullet
   (:require
    [app.config :as cfg]
-   [app.main.ui.shapes.embed :as embed]
    [app.util.color :as uc]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]

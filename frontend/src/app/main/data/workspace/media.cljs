@@ -262,7 +262,6 @@
             
             on-error   #(do (dmm/notify-finished-loading)
                           (dmm/process-error %))
-            team-id    (:current-team-id state)
             prepare
             (fn [content]
               {:file-id (get-in state [:workspace-file :id])

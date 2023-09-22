@@ -8,11 +8,8 @@
   (:require-macros [app.main.style :as stl])
   (:require
    [app.common.data :as d]
-   [app.common.geom.point :as gpt]
-   [app.common.media :as cm]
    [app.config :as cfg]
    [app.main.data.modal :as modal]
-   [app.main.data.workspace :as dw]
    [app.main.data.workspace.colors :as dc]
    [app.main.data.workspace.libraries :as dwl]
    [app.main.data.workspace.media :as dwm]
@@ -22,7 +19,6 @@
    [app.main.ui.components.select :refer [select]]
    [app.main.ui.context :as ctx]
    [app.main.ui.icons :as i]
-   [app.main.ui.components.file-uploader :refer [file-uploader]]
    [app.main.ui.workspace.colorpicker.color-inputs :refer [color-inputs]]
    [app.main.ui.workspace.colorpicker.gradients :refer [gradients]]
    [app.main.ui.workspace.colorpicker.harmony :refer [harmony-selector]]
@@ -77,7 +73,6 @@
         active-color-tab    (mf/use-state (dc/get-active-color-tab))
         drag?               (mf/use-state false)
 
-        file-id             (mf/use-ctx ctx/current-file-id)
         fill-image-ref      (mf/use-ref nil)
 
         selected-mode       (get state :type :color)
@@ -385,8 +380,7 @@
            disable-gradient
            disable-opacity
            disable-image
-           on-change on-close on-accept
-           tab] :as props}]
+           on-change on-close on-accept] :as props}]
   (let [vport (mf/deref viewport)
         dirty? (mf/use-var false)
         last-change (mf/use-var nil)

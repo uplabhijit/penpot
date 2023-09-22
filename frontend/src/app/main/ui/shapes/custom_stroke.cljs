@@ -7,7 +7,6 @@
 (ns app.main.ui.shapes.custom-stroke
   (:require
    [app.config :as cfg]
-   [app.common.data :as d]
    [app.common.data.macros :as dm]
    [app.common.geom.rect :as grc]
    [app.common.geom.shapes :as gsh]

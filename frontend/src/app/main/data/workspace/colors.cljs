@@ -545,11 +545,7 @@
                   (let [current-color (:current-color state)]
                     (if (some? gradient)
                       (let [stop  (or (:editing-stop state) 0)
-                            stops (mapv split-color-components (:stops gradient))
-                            type  (case (:type gradient)
-                                    :linear :linear-gradient
-                                    :radial :radial-gradient
-                                    (:type state))]
+                            stops (mapv split-color-components (:stops gradient))]
                         (-> state
                             (assoc :current-color (nth stops stop))
                             (assoc :stops stops)
