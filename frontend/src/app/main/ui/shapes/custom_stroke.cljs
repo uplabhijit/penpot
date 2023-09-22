@@ -7,6 +7,7 @@
 (ns app.main.ui.shapes.custom-stroke
   (:require
    [app.config :as cfg]
+   [app.common.data :as d]
    [app.common.data.macros :as dm]
    [app.common.geom.rect :as grc]
    [app.common.geom.shapes :as gsh]
@@ -429,8 +430,9 @@
 
         url-fill?    (or ^boolean (some? (:fill-image shape))
                          ^boolean (cph/image-shape? shape)
-                         ^boolean (> (count shape-fills) 0)
-                         ^boolean (some? (some :fill-color-gradient shape-fills)))
+                         ^boolean (> (count shape-fills) 1)
+                         ^boolean (some? (some :fill-color-gradient shape-fills))
+                         ^boolean (some? (some :fill-image shape-fills)))
 
         props        (if (cph/frame-shape? shape)
                        props

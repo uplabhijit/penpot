@@ -82,6 +82,7 @@
     [:opacity {:optional true} [:maybe ::sm/safe-number]]
     [:color {:optional true} [:maybe ::rgb-color]]
     [:gradient {:optional true} [:maybe ::gradient]]]
+   ;; TODO: complete schema
    [::sm/contains-any {:strict true} [:color :gradient :image]]])
 
 (def color?
