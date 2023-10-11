@@ -368,6 +368,8 @@
       (let [library-page (ctp/make-empty-page (uuid/next) "Library backup")]
         [(ctpl/add-page file-data library-page) (:id library-page) (gpt/point 0 0)]))))
 
+(declare fix-file)
+
 (defn migrate-to-components-v2
   "If there is any component in the file library, add a new 'Library backup', generate
   main instances for all components there and remove shapes from library components.
@@ -454,9 +456,56 @@
                   (update page :objects update-vals root-to-board))]
 
             (-> file-data
+                (fix-file)
                 (add-instance-grid (reverse (sort-by :name components)))
                 (update :pages-index update-vals roots-to-board)
                 (assoc-in [:options :components-v2] true))))))))
+
+(defn- fix-file
+  "Apply some specific fixes to things that are allowed in v1 but not in v2, or that are
+   the result of old bugs."
+  [file-data]
+  (let [fix-orphaned-copies
+        (fn [file-data]
+          ; Detach shapes that were inside a copy (has :shape-ref) but now they doesn't.
+          (letfn [(fix-page [page]
+                    (update page :objects update-vals (partial fix-shape page)))
+
+                  (fix-shape [page shape]
+                    (let [parent (ctst/get-shape page (:parent-id shape))]
+                      (if (and (ctk/in-component-copy? shape)
+                               (not (ctk/instance-head? shape))
+                               (not (ctk/in-component-copy? parent)))
+                        (ctk/detach-shape shape)
+                        shape)))]
+
+            (update file-data :pages-index update-vals fix-page)))
+
+        fix-dangling-refs
+        (fn [file-data]
+          ; Detach copies whose :shape-ref points to unexistent shapes. Detach all children too.
+          (letfn [(fix-page [page]
+                    (reduce fix-shape page (ctn/shapes-seq page)))
+
+                  (fix-shape
+                    [page shape]
+                    (if (ctk/in-component-copy? shape)
+                      (let [head      (ctn/get-head-shape (:objects page) shape)
+                            component (ctkl/get-component file-data (:component-id head) true)
+                            ref-shape (ctst/get-shape component (:shape-ref shape))]
+                        (if (nil? ref-shape)
+                          (let [ids (cph/get-children-ids-with-self (:objects page) (:id shape))]
+                            (reduce #(ctn/update-shape %1 %2 ctk/detach-shape)
+                                    page
+                                    ids))
+                          page))
+                      page))]
+
+            (update file-data :pages-index update-vals fix-page)))]
+    
+    (-> file-data
+        (fix-orphaned-copies)
+        (fix-dangling-refs))))
 
 (defn- absorb-components
   [file-data used-components library-data]
