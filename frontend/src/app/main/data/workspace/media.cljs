@@ -16,6 +16,7 @@
    [app.common.types.container :as ctn]
    [app.common.types.shape :as cts]
    [app.common.types.shape-tree :as ctst]
+   [app.common.svg.shapes-builder :as csvg.shapes-builder]
    [app.common.uuid :as uuid]
    [app.config :as cf]
    [app.main.data.media :as dmm]
@@ -273,7 +274,7 @@
         process-svg
         (fn [svg-data]
           (let [[shape children]
-                (svg/create-svg-shapes svg-data pos objects uuid/zero nil #{} false)]
+                (csvg.shapes-builder/create-svg-shapes svg-data pos objects uuid/zero nil #{} false)]
             [shape children]))]
 
     (->> (upload-images svg-data)
