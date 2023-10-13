@@ -280,11 +280,11 @@
                   (/ (gpo/height-points child-bb-before) (max 0.01 (gpo/height-points child-bb-after))))
 
         resize-vector (gpt/point scale-x scale-y)
-        resize-origin (gpo/origin transformed-child-bounds)
+        resize-origin (gpo/origin child-bb-after)
 
-        center            (gco/points->center transformed-child-bounds)
-        selrect           (gtr/calculate-selrect transformed-child-bounds center)
-        transform         (gtr/calculate-transform transformed-child-bounds center selrect)
+        center            (gco/points->center child-bb-after)
+        selrect           (gtr/calculate-selrect child-bb-after center)
+        transform         (gtr/calculate-transform child-bb-after center selrect)
         transform-inverse (when (some? transform) (gmt/inverse transform))]
 
     (ctm/resize modifiers resize-vector resize-origin transform transform-inverse)))
@@ -323,8 +323,15 @@
 
             modifiers (ctm/select-child modifiers)
             transformed-child-bounds (gtr/transform-bounds child-bounds modifiers)
-            modifiers (normalize-modifiers constraints-h constraints-v modifiers
-                                           child-bounds transformed-child-bounds parent-bounds transformed-parent-bounds)
+
+            modifiers (if (and (gpo/axis-aligned? parent-bounds)
+                               (gpo/axis-aligned? child-bounds)
+                               (gpo/axis-aligned? transformed-parent-bounds)
+                               (gpo/axis-aligned? transformed-child-bounds))
+                        modifiers
+                        (normalize-modifiers constraints-h constraints-v modifiers
+                                             child-bounds transformed-child-bounds parent-bounds transformed-parent-bounds))
+
             transformed-child-bounds (gtr/transform-bounds child-bounds modifiers)
 
             child-points-before  (gpo/parent-coords-bounds child-bounds parent-bounds)
