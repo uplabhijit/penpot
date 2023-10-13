@@ -176,9 +176,9 @@
 
 (defn- get-svg-content
   [id]
-  (let [media-id (-> (db/get *conn* {:id id}) :media-id)
+  (let [media-id (-> (db/get *conn* :file-media-object {:id id}) :media-id)
         sobject  (sto/get-object *storage* media-id)]
-    (with-open [stream (sto/get-object-data sobject)]
+    (with-open [stream (sto/get-object-data *storage* sobject)]
       (slurp stream))))
 
 (defn- create-shapes-for-svg
@@ -233,10 +233,11 @@
                                      file-id
                                      true
                                      nil
-                                     cfsh/prepare-create-artboard-from-selection)]
+                                     cfsh/prepare-create-artboard-from-selection)
+        changes (pcb/concat-changes changes changes2)]
 
-    (->> (pcb/concat-changes changes changes2)
-         (cp/process-changes fdata))))
+    ;; (app.common.pprint/pprint change {:level 2 :lenght 5})
+    (cp/process-changes fdata (:redo-changes changes))))
 
 (defn- migrate-graphics
   [{file-id :id :as fdata}]

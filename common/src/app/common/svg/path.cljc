@@ -53,7 +53,9 @@
 
 ;; Path specification
 ;; https://www.w3.org/TR/SVG11/paths.html
-(defmulti parse-command (comp str/upper first))
+(defmulti parse-command
+  (fn [cmd]
+    (str/upper (subs cmd 0 1))))
 
 (defmethod parse-command "M" [cmd]
   (let [relative (str/starts-with? cmd "m")
@@ -424,5 +426,6 @@
               ;; Remove all consecutive spaces
               (str/replace #"\s+" " "))
           commands (re-seq commands-regex clean-path-str)]
+      ;; (app.common.pprint/pprint commands {:length 1000})
       (-> (mapcat parse-command commands)
           (simplify-commands)))))

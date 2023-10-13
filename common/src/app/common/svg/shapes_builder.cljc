@@ -479,11 +479,16 @@
 
 (defn parse-svg-element
   [frame-id svg-data {:keys [tag attrs hidden] :as element} unames]
+
+  ;; FIXME: there are cases where element is directly a string, I
+  ;; think we should handle this case early and avoid some code
+  ;; execution
+
   (let [name         (or (:id attrs) (tag->name tag))
         att-refs     (csvg/find-attr-references attrs)
         defs         (get svg-data :defs)
         references   (csvg/find-def-references defs att-refs)
-        href-id      (-> (or (:href attrs) (:xlink:href attrs) "") (subs 1))
+        href-id      (-> (or (:href attrs) (:xlink:href attrs) " ") (subs 1))
         use-tag?     (and (= :use tag) (contains? defs href-id))]
 
     (if use-tag?
