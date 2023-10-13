@@ -423,8 +423,8 @@
    st/state =))
 
 ;; Remove this when deprecating components-v2
-(def remove-graphics
-  (l/derived :remove-graphics st/state))
+;; (def remove-graphics
+;;   (l/derived :remove-graphics st/state))
 
 ;; ---- Viewer refs
 

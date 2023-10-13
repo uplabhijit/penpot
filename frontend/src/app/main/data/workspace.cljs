@@ -11,6 +11,8 @@
    [app.common.data.macros :as dm]
    [app.common.files.features :as ffeat]
    [app.common.files.helpers :as cfh]
+   [app.common.files.libraries-helpers :as cflh]
+   [app.common.files.shapes-helpers :as cfsh]
    [app.common.geom.align :as gal]
    [app.common.geom.point :as gpt]
    [app.common.geom.proportions :as gpp]
@@ -93,7 +95,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (declare ^:private workspace-initialized)
-(declare ^:private remove-graphics)
+;; (declare ^:private remove-graphics)
 (declare ^:private libraries-fetched)
 
 ;; --- Initialize Workspace
@@ -131,15 +133,18 @@
     (watch [_ state _]
       (let [file           (:workspace-data state)
             has-graphics?  (-> file :media seq)
-            components-v2  (features/active-feature? state :components-v2)]
+            ;; components-v2  (features/active-feature? state :components-v2)
+            ]
         (rx/merge
          (rx/of (fbc/fix-bool-contents)
                 (fdf/fix-deleted-fonts)
                 (fbs/fix-broken-shapes))
 
-         (if (and has-graphics? components-v2)
-           (rx/of (remove-graphics (:id file) (:name file)))
-           (rx/empty)))))))
+         ;; FIXME: :fire:
+         #_(if (and has-graphics? components-v2)
+             (rx/of (remove-graphics (:id file) (:name file)))
+             (rx/empty))
+         )))))
 
 (defn- workspace-data-loaded
   [data]
@@ -2028,137 +2033,137 @@
 ;; TODO: this should be deprecated and removed together with components-v2
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn- initialize-remove-graphics
-  [total]
-  (ptk/reify ::initialize-remove-graphics
-    ptk/UpdateEvent
-    (update [_ state]
-      (assoc state :remove-graphics {:total total
-                                     :current nil
-                                     :error false
-                                     :completed false}))))
+;; (defn- initialize-remove-graphics
+;;   [total]
+;;   (ptk/reify ::initialize-remove-graphics
+;;     ptk/UpdateEvent
+;;     (update [_ state]
+;;       (assoc state :remove-graphics {:total total
+;;                                      :current nil
+;;                                      :error false
+;;                                      :completed false}))))
 
-(defn- update-remove-graphics
-  [current]
-  (ptk/reify ::update-remove-graphics
-    ptk/UpdateEvent
-    (update [_ state]
-      (assoc-in state [:remove-graphics :current] current))))
+;; (defn- update-remove-graphics
+;;   [current]
+;;   (ptk/reify ::update-remove-graphics
+;;     ptk/UpdateEvent
+;;     (update [_ state]
+;;       (assoc-in state [:remove-graphics :current] current))))
 
-(defn- error-in-remove-graphics
-  []
-  (ptk/reify ::error-in-remove-graphics
-    ptk/UpdateEvent
-    (update [_ state]
-      (assoc-in state [:remove-graphics :error] true))))
+;; (defn- error-in-remove-graphics
+;;   []
+;;   (ptk/reify ::error-in-remove-graphics
+;;     ptk/UpdateEvent
+;;     (update [_ state]
+;;       (assoc-in state [:remove-graphics :error] true))))
 
-(defn clear-remove-graphics
-  []
-  (ptk/reify ::clear-remove-graphics
-    ptk/UpdateEvent
-    (update [_ state]
-      (dissoc state :remove-graphics))))
+;; (defn clear-remove-graphics
+;;   []
+;;   (ptk/reify ::clear-remove-graphics
+;;     ptk/UpdateEvent
+;;     (update [_ state]
+;;       (dissoc state :remove-graphics))))
 
-(defn- complete-remove-graphics
-  []
-  (ptk/reify ::complete-remove-graphics
-    ptk/UpdateEvent
-    (update [_ state]
-      (assoc-in state [:remove-graphics :completed] true))
+;; (defn- complete-remove-graphics
+;;   []
+;;   (ptk/reify ::complete-remove-graphics
+;;     ptk/UpdateEvent
+;;     (update [_ state]
+;;       (assoc-in state [:remove-graphics :completed] true))
 
-    ptk/WatchEvent
-    (watch [_ state _]
-      (when-not (get-in state [:remove-graphics :error])
-        (rx/of (modal/hide))))))
+;;     ptk/WatchEvent
+;;     (watch [_ state _]
+;;       (when-not (get-in state [:remove-graphics :error])
+;;         (rx/of (modal/hide))))))
 
-(defn- remove-graphic
-  [it file-data page [index [media-obj pos]]]
-  (let [process-shapes
-        (fn [[shape children]]
-          (let [changes1       (-> (pcb/empty-changes it)
-                                   (pcb/set-save-undo? false)
-                                   (pcb/with-page page)
-                                   (pcb/with-objects (:objects page))
-                                   (pcb/with-library-data file-data)
-                                   (pcb/delete-media (:id media-obj))
-                                   (pcb/add-objects (cons shape children)))
+;; (defn- remove-graphic
+;;   [it file-data page [index [media-obj pos]]]
+;;   (let [process-shapes
+;;         (fn [[shape children]]
+;;           (let [changes1       (-> (pcb/empty-changes it)
+;;                                    (pcb/set-save-undo? false)
+;;                                    (pcb/with-page page)
+;;                                    (pcb/with-objects (:objects page))
+;;                                    (pcb/with-library-data file-data)
+;;                                    (pcb/delete-media (:id media-obj))
+;;                                    (pcb/add-objects (cons shape children)))
 
-                page' (reduce (fn [page shape]
-                                (ctst/add-shape (:id shape)
-                                                shape
-                                                page
-                                                uuid/zero
-                                                uuid/zero
-                                                nil
-                                                true))
-                              page
-                              (cons shape children))
+;;                 page' (reduce (fn [page shape]
+;;                                 (ctst/add-shape (:id shape)
+;;                                                 shape
+;;                                                 page
+;;                                                 uuid/zero
+;;                                                 uuid/zero
+;;                                                 nil
+;;                                                 true))
+;;                               page
+;;                               (cons shape children))
 
-                [_ _ changes2] (dwlh/generate-add-component it
-                                                            [shape]
-                                                            (:objects page')
-                                                            (:id page)
-                                                            (:id file-data)
-                                                            true
-                                                            nil
-                                                            dwsh/prepare-create-artboard-from-selection)
+;;                 [_ _ changes2] (cflh/generate-add-component it
+;;                                                             [shape]
+;;                                                             (:objects page')
+;;                                                             (:id page)
+;;                                                             (:id file-data)
+;;                                                             true
+;;                                                             nil
+;;                                                             cfsh/prepare-create-artboard-from-selection)
 
-                changes (pcb/concat-changes changes1 changes2)]
+;;                 changes (pcb/concat-changes changes1 changes2)]
 
-            (dch/commit-changes changes)))
+;;             (dch/commit-changes changes)))
 
-        shapes (if (= (:mtype media-obj) "image/svg+xml")
-                 (->> (dwm/load-and-parse-svg media-obj)
-                      (rx/mapcat (partial dwm/create-shapes-svg (:id file-data) (:objects page) pos)))
-                 (dwm/create-shapes-img pos media-obj :wrapper-type :frame))]
+;;         shapes (if (= (:mtype media-obj) "image/svg+xml")
+;;                  (->> (dwm/load-and-parse-svg media-obj)
+;;                       (rx/mapcat (partial dwm/create-shapes-svg (:id file-data) (:objects page) pos)))
+;;                  (dwm/create-shapes-img pos media-obj :wrapper-type :frame))]
 
-    (->> (rx/concat
-          (rx/of (update-remove-graphics index))
-          (rx/map process-shapes shapes))
-         (rx/catch #(do
-                      (log/error :msg (str "Error removing " (:name media-obj))
-                                 :hint (ex-message %)
-                                 :error %)
-                      (js/console.log (.-stack %))
-                      (rx/of (error-in-remove-graphics)))))))
+;;     (->> (rx/concat
+;;           (rx/of (update-remove-graphics index))
+;;           (rx/map process-shapes shapes))
+;;          (rx/catch #(do
+;;                       (log/error :msg (str "Error removing " (:name media-obj))
+;;                                  :hint (ex-message %)
+;;                                  :error %)
+;;                       (js/console.log (.-stack %))
+;;                       (rx/of (error-in-remove-graphics)))))))
 
-(defn- remove-graphics
-  [file-id file-name]
-  (ptk/reify ::remove-graphics
-    ptk/WatchEvent
-    (watch [it state stream]
-      (let [file-data (wsh/get-file state file-id)
+;; (defn- remove-graphics
+;;   [file-id file-name]
+;;   (ptk/reify ::remove-graphics
+;;     ptk/WatchEvent
+;;     (watch [it state stream]
+;;       (let [file-data (wsh/get-file state file-id)
 
-            grid-gap 50
+;;             grid-gap 50
 
-            [file-data' page-id start-pos]
-            (ctf/get-or-add-library-page file-data grid-gap)
+;;             [file-data' page-id start-pos]
+;;             (ctf/get-or-add-library-page file-data grid-gap)
 
-            new-page? (nil? (ctpl/get-page file-data page-id))
-            page      (ctpl/get-page file-data' page-id)
-            media     (vals (:media file-data'))
+;;             new-page? (nil? (ctpl/get-page file-data page-id))
+;;             page      (ctpl/get-page file-data' page-id)
+;;             media     (vals (:media file-data'))
 
-            media-points
-            (map #(assoc % :points (-> (grc/make-rect 0 0 (:width %) (:height %))
-                                       (grc/rect->points)))
-                 media)
+;;             media-points
+;;             (map #(assoc % :points (-> (grc/make-rect 0 0 (:width %) (:height %))
+;;                                        (grc/rect->points)))
+;;                  media)
 
-            shape-grid
-            (ctst/generate-shape-grid media-points start-pos grid-gap)
+;;             shape-grid
+;;             (ctst/generate-shape-grid media-points start-pos grid-gap)
 
-            stoper (rx/filter (ptk/type? ::finalize-file) stream)]
+;;             stoper (rx/filter (ptk/type? ::finalize-file) stream)]
 
-        (rx/concat
-         (rx/of (modal/show {:type :remove-graphics-dialog :file-name file-name})
-                (initialize-remove-graphics (count media)))
-         (when new-page?
-           (rx/of (dch/commit-changes (-> (pcb/empty-changes it)
-                                          (pcb/set-save-undo? false)
-                                          (pcb/add-page (:id page) page)))))
-         (->> (rx/mapcat (partial remove-graphic it file-data' page)
-                         (rx/from (d/enumerate (d/zip media shape-grid))))
-              (rx/take-until stoper))
-         (rx/of (complete-remove-graphics)))))))
+;;         (rx/concat
+;;          (rx/of (modal/show {:type :remove-graphics-dialog :file-name file-name})
+;;                 (initialize-remove-graphics (count media)))
+;;          (when new-page?
+;;            (rx/of (dch/commit-changes (-> (pcb/empty-changes it)
+;;                                           (pcb/set-save-undo? false)
+;;                                           (pcb/add-page (:id page) page)))))
+;;          (->> (rx/mapcat (partial remove-graphic it file-data' page)
+;;                          (rx/from (d/enumerate (d/zip media shape-grid))))
+;;               (rx/take-until stoper))
+;;          (rx/of (complete-remove-graphics)))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Read only

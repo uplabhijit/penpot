@@ -194,14 +194,16 @@
 (defn check-features-compatibility!
   "Function responsible to check if provided features are supported by
   the current backend"
-  [features]
-  (let [not-supported (set/difference features supported-features)]
-    (when (seq not-supported)
-      (ex/raise :type :restriction
-                :code :features-not-supported
-                :feature (first not-supported)
-                :hint (format "features %s not supported" (str/join "," (map name not-supported)))))
-    features))
+  ([features]
+   (check-features-compatibility! features supported-features))
+  ([features supported-features]
+   (let [not-supported (set/difference features supported-features)]
+     (when (seq not-supported)
+       (ex/raise :type :restriction
+                 :code :features-not-supported
+                 :feature (first not-supported)
+                 :hint (format "features %s not supported" (str/join "," (map name not-supported)))))
+     features)))
 
 (defn load-pointer
   [conn file-id id]
@@ -253,16 +255,15 @@
        (into #{} (comp (filter pmap/pointer-map?)
                        (map pmap/get-id)))))
 
-;; FIXME: file locking
-(defn- process-components-v2-feature
-  "A special case handling of the components/v2 feature."
-  [{:keys [features data] :as file}]
-  (let [data     (ctf/migrate-to-components-v2 data)
-        features (conj features "components/v2")]
-    (-> file
-        (assoc ::pmg/migrated true)
-        (assoc :features features)
-        (assoc :data data))))
+;; (defn- process-components-v2-feature
+;;   "A special case handling of the components/v2 feature."
+;;   [{:keys [features data] :as file}]
+;;   (let [data     (ctf/migrate-to-components-v2 data)
+;;         features (conj features "components/v2")]
+;;     (-> file
+;;         (assoc ::pmg/migrated true)
+;;         (assoc :features features)
+;;         (assoc :data data))))
 
 (defn handle-file-features!
   [{:keys [features] :as file} client-features]
@@ -280,14 +281,14 @@
                          :hint "file has 'components/v2' feature enabled but frontend didn't specifies it"
                          :file-id (:id file)))
 
-    ;; This operation is needed because the components migration generates a new
-    ;; page with random id which is returned to the client; without persisting
-    ;; the migration this can cause that two simultaneous clients can have a
-    ;; different view of the file data and end persisting two pages with main
-    ;; components and breaking the whole file."
-    (and (contains? client-features "components/v2")
-         (not (contains? features "components/v2")))
-    (as-> file (process-components-v2-feature file))
+    ;; ;; This operation is needed because the components migration generates a new
+    ;; ;; page with random id which is returned to the client; without persisting
+    ;; ;; the migration this can cause that two simultaneous clients can have a
+    ;; ;; different view of the file data and end persisting two pages with main
+    ;; ;; components and breaking the whole file."
+    ;; (and (contains? client-features "components/v2")
+    ;;      (not (contains? features "components/v2")))
+    ;; (as-> file (process-components-v2-feature file))
 
     ;; This operation is needed for backward comapatibility with frontends that
     ;; does not support pointer-map resolution mechanism; this just resolves the

@@ -27,8 +27,13 @@
    [app.common.types.shape-tree :as ctst]
    [app.common.uuid :as uuid]
    [app.db :as db]
-   [app.storage :as sto]))
-
+   [app.media :as media]
+   [app.rpc.commands.files :as files]
+   [app.storage :as sto]
+   [app.util.blob :as blob]
+   [app.util.objects-map :as omap]
+   [app.util.pointer-map :as pmap])
+)
 (def ^:dynamic *conn*)
 (def ^:dynamic *storage*)
 
@@ -151,7 +156,8 @@
 
 (defn- collect-and-persist-images
   [svg-data]
-  ;; TODO: internal svg image processing is still not implemented
+  ;; TODO: internal svg image processing is still not implemented look
+  ;; on svg_upload/upload-images function for reference impl
   (assoc svg-data :image-data {}))
 
 ;; (let [images (csvg/collect-images svg-data)
@@ -251,7 +257,7 @@
                    (process-media-object fdata page-id mobj position))
                  fdata))))
 
-(defn migrate-file-data
+(defn- migrate-file-data
   [fdata]
   (let [migrated? (dm/get-in fdata [:options :components-v2])]
     (if migrated?
@@ -262,13 +268,47 @@
         ;; TODO: migrate graphics
         (update fdata :options assoc :components-v2 true)))))
 
-(defn migrate-file
-  [{:keys [::db/conn ::sto/storage]} file]
+(defn- migrate-file
+  [{:keys [::db/conn ::sto/storage]} {:keys [id] :as file}]
   (binding [*conn* conn
-            *storage* storage]
-    (let [file (update file :data migrate-file-data)]
-      ;; TODO: persist
-      )))
+            *storage* storage
+
+            pmap/*tracked* (atom {})
+            pmap/*load-fn* (partial files/load-pointer conn id)
+            ffeat/*wrap-with-pointer-map-fn*
+            (if (contains? (:features file) "storage/pointer-map") pmap/wrap identity)
+            ffeat/*wrap-with-objects-map-fn*
+            (if (contains? (:features file) "storage/objectd-map") omap/wrap identity)]
+
+    (let [file (-> file
+                   (update :data blob/decode)
+                   (update :data migrate-file-data)
+                   (update :features conj "components/v2"))]
+
+      #_(when (contains? (:features file) "storage/pointer-map")
+          (files/persist-pointers! conn id))
+      #_(db/update! conn :file
+                    {:data (blob/encode (:data file))
+                     :features (db/create-array conn "text" (:features file))
+                     :revn (:revn file)}
+                    {:id (:id file)})
+
+      (dissoc file :data))))
+
+(defn repl-migrate-file
+  [system file-id]
+  (db/tx-run! system
+              (fn [{:keys [::db/conn] :as cfg}]
+                (let [cfg     (update cfg ::sto/storage media/configure-assets-storage)
+                      file-id (if (string? file-id)
+                                (parse-uuid file-id)
+                                file-id)
+                      file    (-> (db/get conn :file {:id file-id})
+                                  (update :features db/decode-pgarray #{}))]
+                  (migrate-file cfg file)))))
+
+
+
 
 
 

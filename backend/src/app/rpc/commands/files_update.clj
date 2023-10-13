@@ -161,10 +161,21 @@
 (defn update-file
   [{:keys [::db/conn ::mtx/metrics] :as cfg} {:keys [profile-id id changes changes-with-metadata skip-validate] :as params}]
   (let [file     (get-file conn id)
-        features (->> (concat (:features file)
-                              (:features params))
-                      (into (files/get-default-features))
-                      (files/check-features-compatibility!))]
+
+        features (->> (files/check-features-compatibility! (:features file))
+                      (into (files/get-default-features)))]
+
+    ;; A special case for components/v2 feature; we don't allow update
+    ;; proceed if client features indicates support for components/v2
+    ;; but the file is still not migrated to components/v2.
+
+    (when (and (contains? (:features params) "components/v2")
+               (not (contains? features "components/v2")))
+      (ex/raise :type :restriction
+                :code :feature-mismatch
+                :feature "components/v2"
+                :hint "file does not has 'components/v2' feature enabled but client specifies it"
+                :file-id (:id file)))
 
     (files/check-edition-permissions! conn profile-id (:id file))
 
@@ -278,9 +289,9 @@
                               (assoc :id (:id file))
                               (pmg/migrate-data))
 
-                          (and (contains? ffeat/*current* "components/v2")
-                               (not (contains? ffeat/*previous* "components/v2")))
-                          (ctf/migrate-to-components-v2)
+                          ;; (and (contains? ffeat/*current* "components/v2")
+                          ;;      (not (contains? ffeat/*previous* "components/v2")))
+                          ;; (ctf/migrate-to-components-v2)
 
                           :always
                           (cp/process-changes changes))))
