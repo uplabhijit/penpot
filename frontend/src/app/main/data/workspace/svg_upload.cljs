@@ -58,6 +58,9 @@
                       :content (wapi/data-uri->blob uri)}
                      {:name (extract-name uri)}))))
        (rx/mapcat (fn [uri-data]
+                    ;; TODO: :create-file-media-object-from-url is
+                    ;; deprecated and this should be resolved in
+                    ;; frontend
                     (->> (rp/cmd! (if (contains? uri-data :content)
                                     :upload-file-media-object
                                     :create-file-media-object-from-url)

@@ -17,7 +17,7 @@
    [app.common.pages.changes-builder :as pcb]
    [app.common.pages.helpers :as cph]
    [app.common.svg :as csvg]
-   [app.common.svg.shapes-builder :as csvg.shapes-builder]
+   [app.common.svg.shapes-builder :as sbuilder]
    [app.common.types.component :as ctk]
    [app.common.types.components-list :as ctkl]
    [app.common.types.container :as ctn]
@@ -43,9 +43,7 @@
   (let [components (ctkl/components-seq file-data)]
     (if (empty? components)
       (assoc-in file-data [:options :components-v2] true)
-      (let [grid-gap 50
-
-            [file-data page-id start-pos]
+      (let [[file-data page-id start-pos]
             (ctf/get-or-add-library-page file-data grid-gap)
 
             add-main-instance
@@ -122,7 +120,7 @@
             (update :pages-index update-vals roots-to-board)
             (assoc-in [:options :components-v2] true))))))
 
-(defn create-shapes-for-bitmap
+(defn- create-shapes-for-bitmap
   "Convert a media object that contains a bitmap image into shapes,
   one shape of type :image and one group that contains it."
   [{:keys [name width height id mtype]} position]
@@ -151,97 +149,107 @@
                       :parent-id (:id group-shape)})]
     [group-shape [img-shape]]))
 
-(defn- get-and-parse-svg
-  [{:keys [id] :as mobj}]
-  (let [media-id (-> (db/get *conn* {:id id}) :media-id)
-        sobject  (sto/get-object *storage* media-id)
-        text     (with-open [stream (sto/get-object-data sobject)]
-                   (slurp stream))
-        data     (csvg/parse text)]
-    (assoc data :name (:name mobj))))
+(defn- collect-and-persist-images
+  [svg-data]
+  ;; TODO: internal svg image processing is still not implemented
+  (assoc svg-data :image-data {}))
 
-(defn- persist-images
-  [images]
-  (do :todo))
+;; (let [images (csvg/collect-images svg-data)
+;;       images (map (fn [uri]
+;;                     (merge
+;;                      {:file-id file-id
+;;                       :is-local true
+;;                       :url uri}
+;;                      ;; TODO: handle correctly uris
+;;                      (if (str/starts-with? uri "data:")
+;;                        {:name "image"
+;;                         ;; :content (wapi/data-uri->blob uri)
+;;                         }
+;;                        {:name (extract-name uri)})))
+;;                   images)])
+
+(defn- get-svg-content
+  [id]
+  (let [media-id (-> (db/get *conn* {:id id}) :media-id)
+        sobject  (sto/get-object *storage* media-id)]
+    (with-open [stream (sto/get-object-data sobject)]
+      (slurp stream))))
 
 (defn- create-shapes-for-svg
-  [mobj file-id objects position]
-  (let [svg-data (get-and-parse-svg mobj)
-        images   (csvg/collect-images svg-data)
-        images   (persist-images images) ;; TODO
-        svg-data (assoc svg-data :image-data images)]
-    (csvg.shapes-builder/create-svg-shapes svg-data position objects uuid/zero nil #{} false)))
-
-(defn- is-svg?
-  [mobj]
-  (= (:mtype mobj) "image/svg+xml"))
+  [{:keys [id] :as mobj} file-id objects position]
+  (let [svg-text (get-svg-content id)
+        svg-data (-> (csvg/parse svg-text)
+                     (assoc :name (:name mobj))
+                     (collect-and-persist-images))]
+    (sbuilder/create-svg-shapes svg-data position objects uuid/zero nil #{} false)))
 
 (defn- process-media-object
   [fdata page-id mobj position]
   (let [page    (ctpl/get-page fdata page-id)
-        objects (get page :objects)
         file-id (get fdata :id)
 
         [shape children]
-        (if (is-svg? mobj)
-          (create-shapes-for-svg mobj file-id objects position)
+        (if (= (:mtype mobj) "image/svg+xml")
+          (create-shapes-for-svg mobj file-id (:objects page) position)
           (create-shapes-for-bitmap mobj position))
 
-        changes       (-> (pcb/empty-changes nil)
-                          (pcb/set-save-undo? false)
-                          (pcb/with-page page)
-                          (pcb/with-objects (:objects page))
-                          (pcb/with-library-data fdata)
-                          (pcb/delete-media (:id mobj))
-                          (pcb/add-objects (cons shape children)))
+        changes
+        (-> (pcb/empty-changes nil)
+            (pcb/set-save-undo? false)
+            (pcb/with-page page)
+            (pcb/with-objects (:objects page))
+            (pcb/with-library-data fdata)
+            (pcb/delete-media (:id mobj))
+            (pcb/add-objects (cons shape children)))
 
-        ;; TODO: WTF, why this need to be done in this way?
-        page' (reduce (fn [page shape]
-                        (ctst/add-shape (:id shape)
-                                        shape
-                                        page
-                                        uuid/zero
-                                        uuid/zero
-                                        nil
-                                        true))
-                      page
-                      (cons shape children))
+        ;; NOTE: this is a workaround for `generate-add-component`, it
+        ;; is needed because that function always starts from empty
+        ;; changes; so in this case we need manually add all shapes to
+        ;; the page and then use that page for the
+        ;; `generate-add-component` function
+        page
+        (reduce (fn [page shape]
+                  (ctst/add-shape (:id shape)
+                                  shape
+                                  page
+                                  uuid/zero
+                                  uuid/zero
+                                  nil
+                                  true))
+                page
+                (cons shape children))
 
-        [_ _ changes2] (cflh/generate-add-component nil
-                                                    [shape]
-                                                    (:objects page')
-                                                    (:id page)
-                                                    file-id
-                                                    true
-                                                    nil
-                                                    cfsh/prepare-create-artboard-from-selection)
+        [_ _ changes2]
+        (cflh/generate-add-component nil
+                                     [shape]
+                                     (:objects page)
+                                     (:id page)
+                                     file-id
+                                     true
+                                     nil
+                                     cfsh/prepare-create-artboard-from-selection)]
 
-        changes (pcb/concat-changes changes changes2)]
+    (->> (pcb/concat-changes changes changes2)
+         (cp/process-changes fdata))))
 
-    (cp/process-changes fdata changes true)))
-
-(defn migrate-graphics
+(defn- migrate-graphics
   [{file-id :id :as fdata}]
-  (let [[fdata page-id start-position]
+  (let [[fdata page-id position]
         (ctf/get-or-add-library-page fdata grid-gap)
 
-        page      (ctpl/get-page fdata page-id)
-        media     (vals (:media fdata))
+        media (->> (vals (:media fdata))
+                   (map (fn [{:keys [width height] :as media}]
+                          (let [points (-> (grc/make-rect 0 0 width height)
+                                           (grc/rect->points))]
+                            (assoc media :points points)))))
 
-        points
-        (map #(assoc % :points (-> (grc/make-rect 0 0 (:width %) (:height %))
-                                   (grc/rect->points)))
-             media)
+        ;; FIXME: improve the usability of this
+        grid  (ctst/generate-shape-grid media position grid-gap)]
 
-        grid
-        (ctst/generate-shape-grid points start-position grid-gap)]
-
-    (loop [items (d/enumerate (d/zip media grid))
-           fdata fdata]
-      (if-let [[index [mobj position]] (first items)]
-        (recur (rest items)
-               (process-media-object fdata page-id mobj position))
-        fdata))))
+    (->> (d/enumerate (d/zip media grid))
+         (reduce (fn [fdata [index [mobj position]]]
+                   (process-media-object fdata page-id mobj position))
+                 fdata))))
 
 (defn migrate-file-data
   [fdata]
