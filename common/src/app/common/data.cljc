@@ -834,45 +834,45 @@
 
 ;; FIXME: why they a repetated here instead reuse cuerdas?
 
-(def stylize-re1 (re-pattern "(?u)(\\p{Lu}+[\\p{Ll}\\u0027\\p{Ps}\\p{Pe}]*)"))
-(def stylize-re2 (re-pattern "(?u)[^\\p{L}\\p{N}\\u0027\\p{Ps}\\p{Pe}\\?!]+"))
+;; (def stylize-re1 (re-pattern "(?u)(\\p{Lu}+[\\p{Ll}\\u0027\\p{Ps}\\p{Pe}]*)"))
+;; (def stylize-re2 (re-pattern "(?u)[^\\p{L}\\p{N}\\u0027\\p{Ps}\\p{Pe}\\?!]+"))
 
-(defn- stylize-split
-  [s]
-  (some-> s
-          (name)
-          (str/replace stylize-re1 "-$1")
-          (str/split stylize-re2)
-          (seq)))
+;; (defn- stylize-split
+;;   [s]
+;;   (some-> s
+;;           (name)
+;;           (str/replace stylize-re1 "-$1")
+;;           (str/split stylize-re2)
+;;           (seq)))
 
-(defn- stylize-join
-  ([coll every-fn join-with]
-   (when (seq coll)
-     (str/join join-with (map every-fn coll))))
-  ([[fst & rst] first-fn rest-fn join-with]
-   (when (string? fst)
-     (str/join join-with (cons (first-fn fst) (map rest-fn rst))))))
+;; (defn- stylize-join
+;;   ([coll every-fn join-with]
+;;    (when (seq coll)
+;;      (str/join join-with (map every-fn coll))))
+;;   ([[fst & rst] first-fn rest-fn join-with]
+;;    (when (string? fst)
+;;      (str/join join-with (cons (first-fn fst) (map rest-fn rst))))))
 
-(defn stylize
-  ([s every-fn join-with]
-   (stylize s every-fn every-fn join-with))
-  ([s first-fn rest-fn join-with]
-    (let [remove-empty #(seq (remove empty? %))]
-      (some-> (stylize-split s)
-              (remove-empty)
-              (stylize-join first-fn rest-fn join-with)))))
+;; (defn stylize
+;;   ([s every-fn join-with]
+;;    (stylize s every-fn every-fn join-with))
+;;   ([s first-fn rest-fn join-with]
+;;     (let [remove-empty #(seq (remove empty? %))]
+;;       (some-> (stylize-split s)
+;;               (remove-empty)
+;;               (stylize-join first-fn rest-fn join-with)))))
 
-(defn camel
-  "Output will be: lowerUpperUpperNoSpaces
-  accepts strings and keywords"
-  [s]
-  (stylize s str/lower str/capital ""))
+;; (defn camel
+;;   "Output will be: lowerUpperUpperNoSpaces
+;;   accepts strings and keywords"
+;;   [s]
+;;   (stylize s str/lower str/capital ""))
 
-(defn kebab
-  "Output will be: lower-cased-and-separated-with-dashes
-  accepts strings and keywords"
-  [s]
-  (stylize s str/lower "-"))
+;; (defn kebab
+;;   "Output will be: lower-cased-and-separated-with-dashes
+;;   accepts strings and keywords"
+;;   [s]
+;;   (stylize s str/lower "-"))
 
 (def ^:const trail-zeros-regex-1 #"\.0+$")
 (def ^:const trail-zeros-regex-2 #"(\.\d*[^0])0+$")

@@ -368,6 +368,7 @@
       (let [library-page (ctp/make-empty-page (uuid/next) "Library backup")]
         [(ctpl/add-page file-data library-page) (:id library-page) (gpt/point 0 0)]))))
 
+;; FIXME: this should be removed
 (defn migrate-to-components-v2
   "If there is any component in the file library, add a new 'Library backup', generate
   main instances for all components there and remove shapes from library components.
