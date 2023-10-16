@@ -168,6 +168,14 @@
         data  (-> b64-data bc/str->bytes bc/b64->bytes)]
     [mtype data]))
 
+(defn- extract-name
+  [href]
+  (let [query-idx (d/nilv (str/last-index-of href "?") 0)
+        href (if (> query-idx 0) (subs href 0 query-idx) href)
+        filename (->> (str/split href "/") (last))
+        ext-idx (str/last-index-of filename ".")]
+    (if (> ext-idx 0) (subs filename 0 ext-idx) filename)))
+
 (defn- collect-and-persist-images
   [svg-data file-id]
   (let [storage (::sto/storage *system*)
@@ -193,7 +201,8 @@
                                                   (assoc :mtype mtype)))
 
                                             (let [result (cmd.media/download-image *system* href)]
-                                              (merge item result)))]
+                                              (-> (merge item result)
+                                                  (assoc :name (extract-name href)))))]
 
                                  ;; The media processing adds the data to the
                                  ;; input map and returns it.
@@ -203,8 +212,6 @@
                                  (l/warn :hint "unexpected exception on processing internal image shape (skiping)"
                                          :cause cause)))))
                      (reduce (fn [acc {:keys [path size width height mtype href] :as item}]
-                               (app.common.pprint/pprint item)
-
                                (let [hash    (sto/calculate-hash path)
                                      content (-> (sto/content path size)
                                                  (sto/wrap-with-hash hash))
@@ -219,7 +226,7 @@
                                  (db/exec-one! conn
                                                [cmd.media/sql:create-file-media-object
                                                 fmo-id
-                                                file-id true "image"
+                                                file-id true (:name item "image")
                                                 (:id image)
                                                 nil
                                                 width
@@ -232,25 +239,7 @@
                                                  :height height})))
                             {}))]
 
-    ;; (app.common.pprint/pprint images)
-
-    ;; TODO: internal svg image processing is still not implemented look
-    ;; on svg_upload/upload-images function for reference impl
-    (assoc svg-data :image-data {})))
-
-;; (let [images (csvg/collect-images svg-data)
-;;       images (map (fn [uri]
-;;                     (merge
-;;                      {:file-id file-id
-;;                       :is-local true
-;;                       :url uri}
-;;                      ;; TODO: handle correctly uris
-;;                      (if (str/starts-with? uri "data:")
-;;                        {:name "image"
-;;                         ;; :content (wapi/data-uri->blob uri)
-;;                         }
-;;                        {:name (extract-name uri)})))
-;;                   images)])
+    (assoc svg-data :image-data images)))
 
 (defn- get-svg-content
   [id]
