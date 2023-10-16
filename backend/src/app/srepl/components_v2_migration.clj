@@ -8,10 +8,10 @@
   (:require
    [app.common.data :as d]
    [app.common.data.macros :as dm]
+   [app.common.exceptions :as ex]
    [app.common.files.features :as ffeat]
    [app.common.files.helpers :as cfh]
    [app.common.files.libraries-helpers :as cflh]
-   [app.common.exceptions :as ex]
    [app.common.files.shapes-helpers :as cfsh]
    [app.common.geom.rect :as grc]
    [app.common.logging :as l]
@@ -28,19 +28,69 @@
    [app.common.types.shape :as cts]
    [app.common.types.shape-tree :as ctst]
    [app.common.uuid :as uuid]
-   [app.rpc.commands.media :as cmd.media]
    [app.db :as db]
    [app.media :as media]
    [app.rpc.commands.files :as files]
+   [app.rpc.commands.media :as cmd.media]
    [app.storage :as sto]
-   [cuerdas.core :as str]
-   [buddy.core.codecs :as bc]
-   [app.util.blob :as blob]
-   [app.util.time :as dt]
    [app.storage.tmp :as tmp]
-   [datoteka.io :as io]
+   [app.util.blob :as blob]
    [app.util.objects-map :as omap]
-   [app.util.pointer-map :as pmap]))
+   [app.util.pointer-map :as pmap]
+   [app.util.time :as dt]
+   [buddy.core.codecs :as bc]
+   [cuerdas.core :as str]
+   [datoteka.io :as io]
+   [promesa.core :as p]
+   [promesa.exec :as px]
+   [promesa.exec.semaphore :as ps]
+   [promesa.protocols :as pt]))
+
+;; - What to do when we are unable to retrieve file from storage
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; MISSING HELPERS IN PROMESA
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(import java.util.concurrent.StructuredTaskScope)
+
+(defn thread-factory
+  [runnable]
+  (let [thb (Thread/ofVirtual)]
+    (.unstarted thb ^Runnable runnable)))
+
+(defn structured-scope
+  ([] (StructuredTaskScope.))
+  ([& {:keys [name thread-factory] :or {thread-factory thread-factory
+                                        name "anonymous"}}]
+   (let [tf (#'px/resolve-thread-factory thread-factory)]
+     (StructuredTaskScope. ^String name
+                           ^ThreadFactory tf))))
+
+(extend-protocol pt/IAwaitable
+  StructuredTaskScope
+  (-await!
+    ([it] (.join ^StructuredTaskScope it))
+    ([it duration]
+     (throw (ex-info "not implemented" {})))))
+
+(extend-protocol pt/ICloseable
+  StructuredTaskScope
+  (-closed? [it]
+    (.isShutdown ^StructuredTaskScope it))
+
+  (-close! [it]
+    (.close ^StructuredTaskScope it))
+  (-close! [it reason]
+    (.close ^StructuredTaskScope it)))
+
+(defn fork!
+  [sts f]
+  (.fork ^StructuredTaskScope sts ^Callable f))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; END PROMESA HELPERS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (def ^:dynamic *system*)
 
@@ -178,68 +228,70 @@
 
 (defn- collect-and-persist-images
   [svg-data file-id]
-  (let [storage (::sto/storage *system*)
-        conn    (::db/conn *system*)
-        images  (->> (csvg/collect-images svg-data)
-                     (keep (fn [{:keys [href] :as item}]
-                             (try
-                               (let [item (if (str/starts-with? href "data:")
-                                            (let [[mtype data] (parse-datauri href)
-                                                  size         (alength data)
-                                                  path         (tmp/tempfile :prefix "penpot.media.download.")
-                                                  written      (io/write-to-file! data path :size size)]
+  (letfn [(process-image [{:keys [href] :as item}]
+            (try
+              (let [item (if (str/starts-with? href "data:")
+                           (let [[mtype data] (parse-datauri href)
+                                 size         (alength data)
+                                 path         (tmp/tempfile :prefix "penpot.media.download.")
+                                 written      (io/write-to-file! data path :size size)]
 
-                                              (when (not= written size)
-                                                (ex/raise :type :internal
-                                                          :code :mismatch-write-size
-                                                          :hint "unexpected state: unable to write to file"))
+                             (when (not= written size)
+                               (ex/raise :type :internal
+                                         :code :mismatch-write-size
+                                         :hint "unexpected state: unable to write to file"))
 
-                                              (-> item
-                                                  (assoc :size size)
-                                                  (assoc :path path)
-                                                  (assoc :filename "tempfile")
-                                                  (assoc :mtype mtype)))
+                             (-> item
+                                 (assoc :size size)
+                                 (assoc :path path)
+                                 (assoc :filename "tempfile")
+                                 (assoc :mtype mtype)))
 
-                                            (let [result (cmd.media/download-image *system* href)]
-                                              (-> (merge item result)
-                                                  (assoc :name (extract-name href)))))]
+                           (let [result (cmd.media/download-image *system* href)]
+                             (-> (merge item result)
+                                 (assoc :name (extract-name href)))))]
 
-                                 ;; The media processing adds the data to the
-                                 ;; input map and returns it.
-                                 (media/run {:cmd :info :input item}))
+                ;; The media processing adds the data to the
+                ;; input map and returns it.
+                (media/run {:cmd :info :input item}))
 
-                               (catch Throwable cause
-                                 (l/warn :hint "unexpected exception on processing internal image shape (skiping)"
-                                         :cause cause)))))
-                     (reduce (fn [acc {:keys [path size width height mtype href] :as item}]
-                               (let [hash    (sto/calculate-hash path)
-                                     content (-> (sto/content path size)
-                                                 (sto/wrap-with-hash hash))
-                                     params  {::sto/content content
-                                              ::sto/deduplicate? true
-                                              ::sto/touched-at (:ts item)
-                                              :content-type mtype
-                                              :bucket "file-media-object"}
-                                     image   (sto/put-object! storage params)
-                                     fmo-id  (uuid/next)]
+              (catch Throwable cause
+                (l/warn :hint "unexpected exception on processing internal image shape (skiping)"
+                        :cause cause))))
 
-                                 (db/exec-one! conn
-                                               [cmd.media/sql:create-file-media-object
-                                                fmo-id
-                                                file-id true (:name item "image")
-                                                (:id image)
-                                                nil
-                                                width
-                                                height
-                                                mtype])
+          (persist-image [acc {:keys [path size width height mtype href] :as item}]
+            (let [storage (::sto/storage *system*)
+                  conn    (::db/conn *system*)
+                  hash    (sto/calculate-hash path)
+                  content (-> (sto/content path size)
+                              (sto/wrap-with-hash hash))
+                  params  {::sto/content content
+                           ::sto/deduplicate? true
+                           ::sto/touched-at (:ts item)
+                           :content-type mtype
+                           :bucket "file-media-object"}
+                  image   (sto/put-object! storage params)
+                  fmo-id  (uuid/next)]
 
-                                (assoc acc href {:id fmo-id
-                                                 :mtype mtype
-                                                 :width width
-                                                 :height height})))
-                            {}))]
+              (db/exec-one! conn
+                            [cmd.media/sql:create-file-media-object
+                             fmo-id
+                             file-id true (:name item "image")
+                             (:id image)
+                             nil
+                             width
+                             height
+                             mtype])
 
-    (assoc svg-data :image-data images)))
+              (assoc acc href {:id fmo-id
+                               :mtype mtype
+                               :width width
+                               :height height})))
+          ]
+
+    (let [images (->> (csvg/collect-images svg-data)
+                      (transduce (keep process-image) (completing persist-image) {}))]
+      (assoc svg-data :image-data images))))
 
 (defn- get-svg-content
   [id]
@@ -247,6 +299,7 @@
         conn     (::db/conn *system*)
         fmobject (db/get conn :file-media-object {:id id})
         sobject  (sto/get-object storage (:media-id fmobject))]
+
     (with-open [stream (sto/get-object-data storage sobject)]
       (slurp stream))))
 
@@ -324,7 +377,10 @@
 
     (->> (d/enumerate (d/zip media grid))
          (reduce (fn [fdata [index [mobj position]]]
-                   (process-media-object fdata page-id mobj position))
+                   (try
+                     (process-media-object fdata page-id mobj position)
+                     (catch Throwable cause
+                       #_(l/warn :hint "unable to process file media object" :id (:id mobj)))))
                  fdata))))
 
 (defmacro with-measure
@@ -334,22 +390,22 @@
        (do ~@body)
        (finally
          (let [elapsed# (tp#)]
-           (l/dbg :hint ~hint :elapsed (dt/format-duration elapsed#)))))))
+           #_(l/dbg :hint ~hint :elapsed (dt/format-duration elapsed#)))))))
 
 (defn- migrate-file-data
   [fdata]
   (let [migrated? (dm/get-in fdata [:options :components-v2])]
     (if migrated?
       fdata
-      (let [fdata (with-measure {:hint "components migrated"}
+      (let [fdata (with-measure {:hint "migrate:components"}
                     (migrate-componentes fdata))
 
-            fdata (with-measure {:hint "graphics migrated"}
+            fdata (with-measure {:hint "migrate:graphics"}
                     (migrate-graphics fdata))]
 
         (update fdata :options assoc :components-v2 true)))))
 
-(defn- migrate-file
+(defn- process-file
   [{:keys [id] :as file}]
   (let [conn (::db/conn *system*)]
     (binding [pmap/*tracked* (atom {})
@@ -359,10 +415,14 @@
               ffeat/*wrap-with-objects-map-fn*
               (if (contains? (:features file) "storage/objectd-map") omap/wrap identity)]
 
+      #_(locking prn
+        (app.common.pprint/pprint file {:level 1}))
+
       (let [file (-> file
                      (update :data blob/decode)
                      (update :data migrate-file-data)
                      (update :features conj "components/v2"))]
+
 
         #_(when (contains? (:features file) "storage/pointer-map")
             (files/persist-pointers! conn id))
@@ -377,30 +437,79 @@
 
 (defn repl-migrate-file
   [system file-id]
-  (db/tx-run! system
-              (fn [{:keys [::db/conn] :as cfg}]
-                (let [cfg     (update cfg ::sto/storage media/configure-assets-storage)
-                      file-id (if (string? file-id)
-                                (parse-uuid file-id)
-                                file-id)
-                      file    (-> (db/get conn :file {:id file-id})
-                                  (update :features db/decode-pgarray #{}))
-                      tpoint  (dt/tpoint)]
+  (let [system  (update system ::sto/storage media/configure-assets-storage)
+        file-id (if (string? file-id)
+                  (parse-uuid file-id)
+                  file-id)]
+    (db/tx-run! system
+                (fn [{:keys [::db/conn] :as system}]
+                  (let [file    (-> (db/get conn :file {:id file-id})
+                                    (update :features db/decode-pgarray #{}))
+                        tpoint  (dt/tpoint)]
+                    (l/dbg :hint "migrate:file:start" :file-id (dm/str file-id))
+                    (try
+                      (binding [*system* system]
+                        (process-file file))
+                      (finally
+                        (let [elapsed (dt/format-duration (tpoint))]
+                          (l/dbg :hint "migrate:file:end" :file-id (dm/str file-id) :elapsed elapsed)))))))))
 
-                  (l/dbg :hint "start migrating file" :id (dm/str file-id))
+;; TODO: check flags
+(def ^:private sql:get-files-chunk
+  "SELECT id, name, features, created_at, revn, data FROM file
+    WHERE created_at < ? AND deleted_at is NULL
+    ORDER BY created_at desc LIMIT ?")
 
-                  (try
-                    (binding [*system* cfg]
-                      (migrate-file file))
-                    (finally
-                      (let [elapsed (tpoint)]
-                        (l/dbg :hint "file migration finished" :id (dm/str file-id) :elapsed (dt/format-duration elapsed)))))))))
+(defn repl-migrate-files
+  [{:keys [::db/pool] :as system} & {:keys [chunk-size max-jobs max-items start-at]
+                                     :or {chunk-size 10 max-jobs 10 max-items Long/MAX_VALUE}}]
+  (letfn [(get-chunk [cursor]
+            (let [rows (db/exec! pool [sql:get-files-chunk cursor chunk-size])]
+              [(some->> rows peek :created-at) (seq rows)]))
+
+          (get-candidates []
+            (->> (d/iteration get-chunk
+                              :vf second
+                              :kf first
+                              :initk (or start-at (dt/now)))
+                 (take max-items)
+                 (map #(update % :features db/decode-pgarray #{}))))
+
+          (run-migrate-file [counter sem file]
+            (let [thr (str (px/current-thread))
+                  tp  (dt/tpoint)]
+              (l/dbg :hint "migrate:file:start" :file-id (str (:id file)))
+              (try
+                (let [system (update system ::sto/storage media/configure-assets-storage)]
+                  (db/tx-run! system
+                              (fn [system]
+                                (binding [*system* system]
+                                  (process-file file)))))
+                (finally
+                  (ps/release! sem)
+                  (let [elapsed (dt/format-duration (tp))]
+                    (l/dbg :hint "migrate:file:end" :file-id (str (:id file)) :elapsed elapsed))
+                  (swap! counter inc)))))
+
+          ]
+
+    (l/dbg :hint "migrate:start")
+    (let [sem (ps/create :permits max-jobs)
+          ssc (structured-scope :name "migration" :thread-factory thread-factory)
+          tp  (dt/tpoint)
+          cn  (atom 0)]
+
+      (add-watch cn :counter (fn [_ _ _ val]
+                               (l/inf :hint "progress" :processed val)))
+
+      (loop [items (get-candidates)]
+        (when-let [item (first items)]
+          (ps/acquire! sem)
+          (fork! ssc (partial run-migrate-file cn sem item))
+          (recur (next items))))
 
 
+      (p/await! ssc)
 
-
-
-
-
-
-
+      (let [elapsed (dt/format-duration (tp))]
+        (l/dbg :hint "migrate:end" :elapsed elapsed)))))
