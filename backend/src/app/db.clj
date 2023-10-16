@@ -242,7 +242,6 @@
       o
       (or (::conn o) (::pool o)))))
 
-
 (def ^:private default-opts
   {:builder-fn sql/as-kebab-maps})
 

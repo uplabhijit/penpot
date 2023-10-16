@@ -36,7 +36,9 @@
           match (re-find regex remain)]
 
       (if match
-        (let [value (-> match first csvg/fix-dot-number d/read-string)
+        (let [value (if (= type :flag)
+                      (d/parse-integer match)
+                      (-> match first csvg/fix-dot-number d/parse-double))
               remain (str/replace-first remain regex "")
               current (assoc current param value)
               extract-idx (inc extract-idx)
@@ -128,8 +130,8 @@
   (let [relative (str/starts-with? cmd "q")
         param-list (extract-params cmd [[:cx :number]
                                         [:cy :number]
-                                        [:x   :number]
-                                        [:y   :number]])]
+                                        [:x  :number]
+                                        [:y  :number]])]
     (for [params param-list]
       {:command :quadratic-bezier-curve-to
        :relative relative
