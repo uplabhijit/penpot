@@ -56,7 +56,10 @@
 
 (defn thread-factory
   [runnable]
-  (let [thb (Thread/ofVirtual)]
+  (let [
+        thb (Thread/ofVirtual)
+        ;; thb (Thread/ofPlatform)
+        ]
     (.unstarted thb ^Runnable runnable)))
 
 (defn structured-scope
@@ -93,6 +96,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (def ^:dynamic *system*)
+(def ^:dynamic *stats*)
 
 (def grid-gap 50)
 
@@ -176,6 +180,9 @@
             roots-to-board
             (fn [page]
               (update page :objects update-vals root-to-board))]
+
+        (when (some? *stats*)
+          (swap! *stats* assoc :components (count components)))
 
         (-> file-data
             (add-instance-grid (reverse (sort-by :name components)))
@@ -290,7 +297,8 @@
           ]
 
     (let [images (->> (csvg/collect-images svg-data)
-                      (transduce (keep process-image) (completing persist-image) {}))]
+                      (transduce (keep process-image)
+                                 (completing persist-image) {}))]
       (assoc svg-data :image-data images))))
 
 (defn- get-svg-content
@@ -374,6 +382,9 @@
 
         ;; FIXME: improve the usability of this
         grid  (ctst/generate-shape-grid media position grid-gap)]
+
+    (when (some? *stats*)
+      (swap! *stats* assoc :graphics (count media)))
 
     (->> (d/enumerate (d/zip media grid))
          (reduce (fn [fdata [index [mobj position]]]
@@ -475,41 +486,46 @@
                  (take max-items)
                  (map #(update % :features db/decode-pgarray #{}))))
 
-          (run-migrate-file [counter sem file]
-            (let [thr (str (px/current-thread))
-                  tp  (dt/tpoint)]
+          (migrate-file [counter sem file]
+            (let [tpoint  (dt/tpoint)
+                  stats   (atom {})]
               (l/dbg :hint "migrate:file:start" :file-id (str (:id file)))
               (try
                 (let [system (update system ::sto/storage media/configure-assets-storage)]
                   (db/tx-run! system
                               (fn [system]
-                                (binding [*system* system]
+                                (binding [*system* system
+                                          *stats* stats]
                                   (process-file file)))))
                 (finally
                   (ps/release! sem)
-                  (let [elapsed (dt/format-duration (tp))]
-                    (l/dbg :hint "migrate:file:end" :file-id (str (:id file)) :elapsed elapsed))
+                  (let [elapsed (dt/format-duration (tpoint))
+                        stats   (deref stats)]
+                    (l/dbg :hint "migrate:file:end" :file-id (str (:id file))
+                           :components (:components stats 0)
+                           :graphics   (:graphics stats 0)
+                           :elapsed    elapsed))
                   (swap! counter inc)))))
 
           ]
 
     (l/dbg :hint "migrate:start")
-    (let [sem (ps/create :permits max-jobs)
-          ssc (structured-scope :name "migration" :thread-factory thread-factory)
-          tp  (dt/tpoint)
-          cn  (atom 0)]
+    (let [sem     (ps/create :permits max-jobs)
+          ssc     (structured-scope :name "migration" :thread-factory thread-factory)
+          tpoint  (dt/tpoint)
+          counter (atom 0)]
 
-      (add-watch cn :counter (fn [_ _ _ val]
-                               (l/inf :hint "progress" :processed val)))
+      (add-watch counter :progress-report
+                 (fn [_ _ _ val]
+                   (l/inf :hint "progress" :processed val)))
 
       (loop [items (get-candidates)]
         (when-let [item (first items)]
           (ps/acquire! sem)
-          (fork! ssc (partial run-migrate-file cn sem item))
+          (fork! ssc (partial migrate-file counter sem item))
           (recur (next items))))
-
 
       (p/await! ssc)
 
-      (let [elapsed (dt/format-duration (tp))]
+      (let [elapsed (dt/format-duration (tpoint))]
         (l/dbg :hint "migrate:end" :elapsed elapsed)))))
